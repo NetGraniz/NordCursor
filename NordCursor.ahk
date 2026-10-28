@@ -710,8 +710,12 @@ CleanUp(*) {
     SetTimer CheckIdle, 0
     SetTimer MoveCursor, 0
     SetExecutionState(false)
-    if fontFamily
+    if fontFamily {
         DllCall("gdiplus\GdipDeleteFontFamily", "Ptr", fontFamily)
-    if gdipToken
-        DllCall("gdiplus\GdiplusShutdown", "Ptr", gdipToken)
+        fontFamily := 0
+    }
+    ; GDI+ is process-scoped here. Avoid GdiplusShutdown during OnExit:
+    ; it raises 0xC0000005 in the compiled programs on exit.
+    ; Windows reclaims the GDI+ runtime when the process terminates.
+    gdipToken := 0
 }
