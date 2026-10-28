@@ -27,6 +27,7 @@ global enabledAt := A_TickCount
 global lastPhysicalInput := A_TickCount
 global isEnabled := true
 global isMoving := false
+global hoverPart := ""
 
 global gdipToken := 0
 global fontFamily := 0
@@ -35,7 +36,7 @@ global dropdownPanel := 0
 global openKind := ""
 global statusTitle := "Waiting for inactivity"
 global statusHint := "Movement will start automatically"
-global statusColor := 0xFF60D6A4
+global statusColor := 0xFF1DCBFB
 
 ; -DPIScale keeps painted hit regions aligned with cursor coordinates.
 global app := Gui("-Caption -Resize -DPIScale", "NordCursor")
@@ -48,6 +49,8 @@ app.OnEvent("Close", CloseApp)
 app.OnEvent("Escape", CloseDropdown)
 app.OnEvent("Size", HandleSize)
 OnMessage(0x0201, HandleMouseDown)
+OnMessage(0x0200, HandlePointerMove)
+OnMessage(0x02A3, HandlePointerLeave)
 OnMessage(0x0006, HandleActivate)
 OnExit CleanUp
 
@@ -61,10 +64,11 @@ A_TrayMenu.Default := "Open NordCursor"
 A_TrayMenu.ClickCount := 1
 
 StartGraphics()
-app.Show("w432 h332")
-RoundWindow(app.Hwnd, 16, 432, 332)
+app.Show("Hide w432 h332")
+RoundWindow(app.Hwnd, 18, 432, 332)
 SetDarkWindow(app.Hwnd)
 DrawPanel()
+app.Show()
 SetExecutionState(true)
 SetTimer CheckIdle, 40
 
@@ -79,72 +83,107 @@ StartGraphics() {
 }
 
 DrawPanel() {
-    global panel, idleIndex, radiusIndex, speedIndex
+    global panel, idleIndex, radiusIndex, speedIndex, hoverPart
     global idleLabels, radiusLabels, speedLabels, statusTitle, statusHint, statusColor
     global isEnabled, isMoving
-    g := BeginPaint(432, 332, 0xFF121B29, &bitmap)
+    g := BeginPaint(432, 332, 0xFF101C2D, &bitmap)
+    DrawWindowShell(g)
+    CursorIcon(g, 27, 26, 0xFF20CEFA)
+    TextAt(g, "NordCursor", 75, 19, 235, 42, 19.5, 0xFFE9F3FF, true)
+    Line(g, 364, 37, 374, 37, 0xFFA1B3CB, 1.6)
+    Line(g, 395, 32, 406, 43, 0xFFA1B3CB, 1.6)
+    Line(g, 406, 32, 395, 43, 0xFFA1B3CB, 1.6)
 
-    ; NordEye-style cyan frame: several subtle outlines, not a sharp neon stroke.
-    GlowFrame(g, 0, 0, 432, 332, 16, 0xFF314258)
-    Rounded(g, 20, 20, 40, 40, 11, 0xFF1E3149, 0xFF335477, 1)
-    Outline(g, 22, 22, 36, 36, 10, 0x3436B5F4, 1)
-    TextAt(g, "◎", 20, 20, 40, 40, 21, 0xFF18C3F7, true, 1)
-    TextAt(g, "NordCursor", 72, 20, 235, 38, 18, 0xFFE9F4FF, true)
-    TextAt(g, isEnabled ? "АКТИВНО" : "ПАУЗА", 72, 48, 145, 16, 9
-        , isEnabled ? 0xFF59DFAE : 0xFF7F94AD)
-    Line(g, 365, 39, 375, 39, 0xFF8498B1, 1.7)
-    Line(g, 398, 35, 406, 43, 0xFF8498B1, 1.7)
-    Line(g, 406, 35, 398, 43, 0xFF8498B1, 1.7)
+    DrawIconTile(g, 25, 88, 43, 43)
+    ClockIcon(g, 46.5, 109.5, 0xFFC4D7F1)
+    TextAt(g, "Start after inactivity", 82, 89, 180, 40, 12.9, 0xFFE5F1FF)
+    DrawControl(g, 254, 90, 153, 39, idleLabels[idleIndex], hoverPart = "idle")
 
-    ; Each selector gets its own cyan border and a soft external halo.
-    TextAt(g, "Start after inactivity", 20, 89, 275, 35, 13, 0xFFE6F2FF, true)
-    TextAt(g, "Movement radius", 20, 134, 275, 35, 13, 0xFFE6F2FF, true)
-    TextAt(g, "Speed", 20, 179, 275, 35, 13, 0xFFE6F2FF, true)
-    DrawSelect(g, 302, 90, idleLabels[idleIndex])
-    DrawSelect(g, 302, 135, radiusLabels[radiusIndex])
-    DrawSelect(g, 302, 180, speedLabels[speedIndex])
+    DrawIconTile(g, 25, 141, 43, 43)
+    TargetIcon(g, 46.5, 162.5, 0xFFC4D7F1)
+    TextAt(g, "Movement radius", 82, 142, 173, 40, 12.9, 0xFFE5F1FF)
+    DrawControl(g, 254, 143, 153, 39, radiusLabels[radiusIndex], hoverPart = "radius")
 
-    ; Status card has the same rounded illuminated surface as NordEye buttons.
-    Rounded(g, 20, 230, 392, 82, 13, 0xFF172438, 0xFF2D4763, 1.1)
-    Outline(g, 22, 232, 388, 78, 12, 0x273BB9F0, 1)
-    Outline(g, 24, 234, 384, 74, 11, 0x1242AFFF, 1)
-    Rounded(g, 34, 245, 28, 28, 11, 0xFF1E3149, 0xFF335477, 1)
-    TextAt(g, isMoving ? "↗" : isEnabled ? "✓" : "Ⅱ", 35, 247, 26, 24, 13, statusColor, true, 1)
-    TextAt(g, statusTitle, 72, 239, 219, 32, 13, 0xFFE9F4FF, true)
-    TextAt(g, statusHint, 35, 276, 251, 26, 11, 0xFF94A9C4)
-    ; Uses the existing Toggle() action, now available from the panel too.
-    if isEnabled {
-        Rounded(g, 300, 252, 101, 44, 11, 0xFF213149, 0xFF344C68, 1.1)
-        Outline(g, 302, 254, 97, 40, 10, 0x302FAEF0, 1)
-        TextAt(g, "Ⅱ Pause", 302, 254, 97, 40, 12, 0xFFD8E6F8, true, 1)
-    } else {
-        Outline(g, 298, 250, 105, 48, 12, 0x1A32CFFF, 1)
-        Rounded(g, 300, 252, 101, 44, 11, 0xFF0EADE8, 0xFF32D9FF, 1.3)
-        Outline(g, 302, 254, 97, 40, 10, 0x652AF0FF, 1)
-        TextAt(g, "▶ Resume", 302, 254, 97, 40, 12, 0xFFFFFFFF, true, 1)
-    }
+    DrawIconTile(g, 25, 194, 43, 43)
+    GaugeIcon(g, 46.5, 215.5, 0xFFC4D7F1)
+    TextAt(g, "Speed", 82, 195, 173, 40, 12.9, 0xFFE5F1FF)
+    DrawControl(g, 254, 196, 153, 39, speedLabels[speedIndex], hoverPart = "speed")
+
+    Line(g, 25, 249, 407, 249, 0xFF2B405B, 0.9)
+    GradientRounded(g, 23, 260, 386, 59, 11, 0xFF1D3049, 0xFF16263B, 0xFF304763, 0.9)
+    Outline(g, 24.7, 261.7, 382.6, 55.6, 10, 0x1C43B9EF, 0.9)
+    Rounded(g, 35, 276, 28, 28, 14, 0x242EB7F3)
+    Rounded(g, 42, 283, 14, 14, 7, statusColor)
+    TextAt(g, statusTitle, 75, 262, 228, 28, 12.7, 0xFFE8F2FF)
+    TextAt(g, statusHint, 75, 289, 231, 22, 10.5, 0xFF92AACC)
+    ; Functional Pause / Resume action integrated as a small glass button.
+    if isEnabled
+        DrawCompactAction(g, 311, 272, 87, 35, "Pause", false, hoverPart = "toggle")
+    else
+        DrawCompactAction(g, 311, 272, 87, 35, "Resume", true, hoverPart = "toggle")
     EndPaint(panel, g, bitmap)
 }
 
-DrawSelect(g, x, y, label) {
-    ; Three soft outer rings give the same focused glow as NordEye controls.
-    Outline(g, x - 3, y - 3, 116, 39, 12, 0x0E3CCAFF, 1)
-    Outline(g, x - 2, y - 2, 114, 37, 11, 0x2053C8FF, 1)
-    Rounded(g, x, y, 110, 33, 10, 0xFF1D2B40, 0xFF37618B, 1.2)
-    Outline(g, x + 1.5, y + 1.5, 107, 30, 9, 0x3635C8F9, 1)
-    TextAt(g, label, x + 6, y + 1, 79, 31, 12, 0xFFE9F4FF, true, 1)
-    Line(g, x + 91, y + 14, x + 95, y + 18, 0xFF9CB6D3, 1.8)
-    Line(g, x + 95, y + 18, x + 99, y + 14, 0xFF9CB6D3, 1.8)
+CursorIcon(g, x, y, color) {
+    ; Crisp mouse-pointer outline similar to the product icon.
+    path := 0, pen := 0, brush := 0
+    DllCall("gdiplus\GdipCreatePath", "Int", 0, "Ptr*", &path)
+    pts := [[x, y], [x+5, y+32], [x+12, y+24], [x+19, y+36]
+        , [x+25, y+33], [x+17, y+20], [x+29, y+18]]
+    Loop pts.Length {
+        j := A_Index = pts.Length ? 1 : A_Index+1
+        DllCall("gdiplus\GdipAddPathLine", "Ptr", path
+            , "Float", pts[A_Index][1], "Float", pts[A_Index][2]
+            , "Float", pts[j][1], "Float", pts[j][2])
+    }
+    DllCall("gdiplus\GdipClosePathFigure", "Ptr", path)
+    DllCall("gdiplus\GdipCreateSolidFill", "UInt", color, "Ptr*", &brush)
+    DllCall("gdiplus\GdipFillPath", "Ptr", g, "Ptr", brush, "Ptr", path)
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
+    DllCall("gdiplus\GdipCreatePen1", "UInt", 0xFF55DFFF, "Float", 1, "Int", 2, "Ptr*", &pen)
+    DllCall("gdiplus\GdipDrawPath", "Ptr", g, "Ptr", pen, "Ptr", path)
+    DllCall("gdiplus\GdipDeletePen", "Ptr", pen)
+    DllCall("gdiplus\GdipDeletePath", "Ptr", path)
 }
 
-GlowFrame(g, x, y, w, h, radius, border) {
-    for idx, color in [0x0C77CFFF, 0x1668BDFF, 0x295D99D2] {
-        offset := 5 - idx
-        Outline(g, x + offset, y + offset, w - 2*offset, h - 2*offset, radius, color, 1.2)
-    }
-    Outline(g, x + 1, y + 1, w - 2, h - 2, radius, border, 1.1)
-    Outline(g, x + 2.5, y + 2.5, w - 5, h - 5, radius, 0x432787C3, 1)
+ClockIcon(g, x, y, color) {
+    pen := 0
+    DllCall("gdiplus\GdipCreatePen1", "UInt", color, "Float", 1.8, "Int", 2, "Ptr*", &pen)
+    DllCall("gdiplus\GdipDrawEllipse", "Ptr", g, "Ptr", pen, "Float", x-12, "Float", y-12, "Float", 24, "Float", 24)
+    DllCall("gdiplus\GdipDrawLine", "Ptr", g, "Ptr", pen, "Float", x, "Float", y-8, "Float", x, "Float", y)
+    DllCall("gdiplus\GdipDrawLine", "Ptr", g, "Ptr", pen, "Float", x, "Float", y, "Float", x+6, "Float", y+4)
+    DllCall("gdiplus\GdipDeletePen", "Ptr", pen)
 }
+
+TargetIcon(g, x, y, color) {
+    pen := 0
+    DllCall("gdiplus\GdipCreatePen1", "UInt", color, "Float", 1.7, "Int", 2, "Ptr*", &pen)
+    DllCall("gdiplus\GdipDrawEllipse", "Ptr", g, "Ptr", pen, "Float", x-12, "Float", y-12, "Float", 24, "Float", 24)
+    DllCall("gdiplus\GdipDrawEllipse", "Ptr", g, "Ptr", pen, "Float", x-6, "Float", y-6, "Float", 12, "Float", 12)
+    DllCall("gdiplus\GdipDeletePen", "Ptr", pen)
+    Rounded(g, x-2, y-2, 4, 4, 2, color)
+}
+
+GaugeIcon(g, x, y, color) {
+    pen := 0
+    DllCall("gdiplus\GdipCreatePen1", "UInt", color, "Float", 1.8, "Int", 2, "Ptr*", &pen)
+    DllCall("gdiplus\GdipDrawArc", "Ptr", g, "Ptr", pen, "Float", x-13, "Float", y-10, "Float", 26, "Float", 26, "Float", 190, "Float", 160)
+    DllCall("gdiplus\GdipDrawLine", "Ptr", g, "Ptr", pen, "Float", x, "Float", y+4, "Float", x+7, "Float", y-5)
+    DllCall("gdiplus\GdipDeletePen", "Ptr", pen)
+}
+
+DrawCompactAction(g, x, y, w, h, title, primary, hot := false) {
+    if hot
+        Outline(g, x-2, y-2, w+4, h+4, 10, 0x4636D5FF, 1.4)
+    GradientRounded(g, x, y, w, h, 9
+        , primary ? 0xFF20C9FD : (hot ? 0xFF2A405B : 0xFF253A54)
+        , primary ? 0xFF078FE1 : (hot ? 0xFF1C304A : 0xFF1B2941)
+        , primary ? 0xFF46E2FF : 0xFF385879, 1)
+    TextAt(g, primary ? "▶" : "Ⅱ", x+6, y, 21, h, 12, 0xFFEAF7FF, true, 1)
+    TextAt(g, title, x+26, y, w-30, h, 11.3, 0xFFEAF7FF, false, 1)
+}
+
+
 
 BeginPaint(w, h, background, &bitmap) {
     bitmap := 0
@@ -165,6 +204,111 @@ EndPaint(picture, g, bitmap) {
     DllCall("gdi32\DeleteObject", "Ptr", bitmapHandle)
     DllCall("gdiplus\GdipDeleteGraphics", "Ptr", g)
     DllCall("gdiplus\GdipDisposeImage", "Ptr", bitmap)
+}
+
+; -------- Reference-matched GDI+ surfaces / controls --------
+
+GradientRounded(g, x, y, w, h, r, topColor, bottomColor, border := 0, thickness := 1) {
+    path := MakeRoundPath(x, y, w, h, r)
+    rect := Buffer(16, 0)
+    NumPut "Float", x, rect, 0
+    NumPut "Float", y, rect, 4
+    NumPut "Float", w, rect, 8
+    NumPut "Float", h, rect, 12
+    brush := 0
+    result := DllCall("gdiplus\GdipCreateLineBrushFromRect", "Ptr", rect
+        , "UInt", topColor, "UInt", bottomColor, "Int", 1, "Int", 0, "Ptr*", &brush)
+    if result || !brush
+        DllCall("gdiplus\GdipCreateSolidFill", "UInt", topColor, "Ptr*", &brush)
+    DllCall("gdiplus\GdipFillPath", "Ptr", g, "Ptr", brush, "Ptr", path)
+    DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
+    if border
+        StrokePath(g, path, border, thickness)
+    DllCall("gdiplus\GdipDeletePath", "Ptr", path)
+}
+
+DrawWindowShell(g) {
+    ; An inset shadow + cold, thin rim (rather than a flat outline).
+    GradientRounded(g, 0, 0, 432, 332, 18, 0xFF17283E, 0xFF0D1727)
+    Outline(g, 0.8, 0.8, 430.4, 330.4, 18, 0x4D39BFFF, 2.4)
+    Outline(g, 1.5, 1.5, 429, 329, 18, 0xB13FA9ED, 1.05)
+    Outline(g, 3.8, 3.8, 424.4, 324.4, 16, 0x2149B7FF, 2)
+    Line(g, 23, 5, 408, 5, 0x193AB9F9, 1)
+}
+
+DrawIconTile(g, x, y, w := 43, h := 43) {
+    GradientRounded(g, x, y, w, h, 11, 0xFF233650, 0xFF18273D, 0xFF2C405C, 0.9)
+    Outline(g, x+1.4, y+1.4, w-2.8, h-2.8, 10, 0x1935B9F4, 1)
+}
+
+DrawControl(g, x, y, w, h, label, hot := false) {
+    if hot {
+        Outline(g, x-3, y-3, w+6, h+6, 13, 0x1F45CFFF, 2)
+        Outline(g, x-1.5, y-1.5, w+3, h+3, 12, 0x3C35CCFF, 1.5)
+    }
+    GradientRounded(g, x, y, w, h, 10, hot ? 0xFF263C57 : 0xFF213249
+        , hot ? 0xFF1B2E47 : 0xFF18283F, hot ? 0xFF4AABEF : 0xFF395A7F, 1.2)
+    Outline(g, x+1.8, y+1.8, w-3.6, h-3.6, 9, 0x2C2AAAF5, 0.85)
+    TextAt(g, label, x+15, y+1, w-52, h-2, 13.6, 0xFFE7F3FF)
+    ax := x + w - 25, ay := y + h/2
+    Line(g, ax-6, ay-3, ax, ay+3, 0xFFB3CBE6, 1.8)
+    Line(g, ax, ay+3, ax+6, ay-3, 0xFFB3CBE6, 1.8)
+}
+
+DrawAction(g, x, y, w, h, title, kind, hot := false) {
+    if kind = "primary" {
+        if hot {
+            Outline(g, x-3, y-3, w+6, h+6, 13, 0x3435DEFF, 2.5)
+            Outline(g, x-1.5, y-1.5, w+3, h+3, 12, 0x6341D8FF, 1.5)
+        }
+        GradientRounded(g, x, y, w, h, 11
+            , hot ? 0xFF4BE3FF : 0xFF21C5FA, hot ? 0xFF06A6F4 : 0xFF079CE7, 0xFF3DE7FF, 1.25)
+        Outline(g, x+1.7, y+1.7, w-3.4, h-3.4, 10, 0x7F97F4FF, 1)
+        color := 0xFFFFFFFF
+    } else {
+        if hot
+            Outline(g, x-2, y-2, w+4, h+4, 12, 0x3140C7FA, 1.8)
+        GradientRounded(g, x, y, w, h, 11
+            , hot ? 0xFF2A4261 : 0xFF26364F, hot ? 0xFF1C304A : 0xFF1C2B42
+            , hot ? 0xFF5087BB : 0xFF344E70, 1.1)
+        Outline(g, x+1.5, y+1.5, w-3, h-3, 10, 0x2535A8F4, 1)
+        color := 0xFFDAE7FA
+    }
+    if title = "Start" || title = "Running" || title = "Resume" {
+        ; Triangle / checkmark, separately drawn to avoid emoji font fallback.
+        if title = "Running"
+            TextAt(g, "✓", x+10, y+1, 26, h-2, 16, color, true, 1)
+        else
+            TextAt(g, "▶", x+11, y+1, 24, h-2, 17, color, true, 1)
+    } else if title = "Preview" {
+        SmallEyeIcon(g, x+17, y+h/2, color)
+    } else {
+        Rounded(g, x+16, y+h/2-9, 4, 18, 2, color)
+        Rounded(g, x+25, y+h/2-9, 4, 18, 2, color)
+    }
+    TextAt(g, title, x+40, y+1, w-45, h-2, 13.4, color, false, 1)
+}
+
+SmallEyeIcon(g, x, y, color) {
+    pen := 0
+    DllCall("gdiplus\GdipCreatePen1", "UInt", color, "Float", 2.2, "Int", 2, "Ptr*", &pen)
+    DllCall("gdiplus\GdipDrawBezier", "Ptr", g, "Ptr", pen
+        , "Float", x-12, "Float", y, "Float", x-6, "Float", y-9
+        , "Float", x+6, "Float", y-9, "Float", x+12, "Float", y)
+    DllCall("gdiplus\GdipDrawBezier", "Ptr", g, "Ptr", pen
+        , "Float", x-12, "Float", y, "Float", x-6, "Float", y+9
+        , "Float", x+6, "Float", y+9, "Float", x+12, "Float", y)
+    DllCall("gdiplus\GdipDrawEllipse", "Ptr", g, "Ptr", pen
+        , "Float", x-3.5, "Float", y-3.5, "Float", 7, "Float", 7)
+    DllCall("gdiplus\GdipDeletePen", "Ptr", pen)
+}
+
+TrackPointerLeave(hwnd) {
+    event := Buffer(A_PtrSize = 8 ? 24 : 16, 0)
+    NumPut "UInt", event.Size, event, 0
+    NumPut "UInt", 2, event, 4 ; TME_LEAVE
+    NumPut "Ptr", hwnd, event, 8
+    DllCall("user32\TrackMouseEvent", "Ptr", event)
 }
 
 Rounded(g, x, y, w, h, r, fill, border := 0, thickness := 1) {
@@ -264,6 +408,41 @@ HandleMouseDown(wParam, lParam, msg, hwnd) {
     }
 }
 
+HoverAt(x, y) {
+    if x >= 254 && x <= 407 {
+        if y >= 90 && y <= 129
+            return "idle"
+        if y >= 143 && y <= 182
+            return "radius"
+        if y >= 196 && y <= 235
+            return "speed"
+    }
+    if x >= 311 && x <= 398 && y >= 272 && y <= 307
+        return "toggle"
+    return ""
+}
+
+HandlePointerMove(wParam, lParam, msg, hwnd) {
+    global app, hoverPart
+    if DllCall("user32\GetAncestor", "Ptr", hwnd, "UInt", 2, "Ptr") != app.Hwnd
+        return
+    TrackPointerLeave(hwnd)
+    MouseInClient(app.Hwnd, &x, &y)
+    hovered := HoverAt(x, y)
+    if hovered != hoverPart {
+        hoverPart := hovered
+        DrawPanel()
+    }
+}
+
+HandlePointerLeave(wParam, lParam, msg, hwnd) {
+    global app, hoverPart
+    if DllCall("user32\GetAncestor", "Ptr", hwnd, "UInt", 2, "Ptr") = app.Hwnd && hoverPart != "" {
+        hoverPart := ""
+        DrawPanel()
+    }
+}
+
 HandlePanelClick(*) {
     global app
     MouseInClient(app.Hwnd, &x, &y)
@@ -275,13 +454,13 @@ HandlePanelClick(*) {
         MinimizeApp()
         return
     }
-    if x >= 300 && x <= 401 && y >= 252 && y <= 296 {
+    if x >= 311 && x <= 398 && y >= 272 && y <= 307 {
         Toggle()
-    } else if x >= 302 && x <= 412 && y >= 90 && y <= 123 {
+    } else if x >= 254 && x <= 407 && y >= 90 && y <= 129 {
         ShowDropdown("idle")
-    } else if x >= 302 && x <= 412 && y >= 135 && y <= 168 {
+    } else if x >= 254 && x <= 407 && y >= 143 && y <= 182 {
         ShowDropdown("radius")
-    } else if x >= 302 && x <= 412 && y >= 180 && y <= 213 {
+    } else if x >= 254 && x <= 407 && y >= 196 && y <= 235 {
         ShowDropdown("speed")
     } else {
         CloseDropdown()
@@ -300,13 +479,13 @@ ShowDropdown(kind) {
         case "idle":
             labels := idleLabels, selected := idleIndex, anchorY := 90
         case "radius":
-            labels := radiusLabels, selected := radiusIndex, anchorY := 135
+            labels := radiusLabels, selected := radiusIndex, anchorY := 143
         case "speed":
-            labels := speedLabels, selected := speedIndex, anchorY := 180
+            labels := speedLabels, selected := speedIndex, anchorY := 196
     }
     openKind := kind
-    w := 152, rowH := 34, h := 12 + rowH * labels.Length
-    dropdownGui := Gui("-Caption +ToolWindow +AlwaysOnTop -DPIScale +E0x08000000 +Owner" app.Hwnd, "")
+    w := 164, rowH := 34, h := 12 + rowH * labels.Length
+    dropdownGui := Gui("-Caption +ToolWindow -DPIScale +E0x08000000 +Owner" app.Hwnd, "")
     dropdownGui.BackColor := "172638"
     dropdownGui.MarginX := 0
     dropdownGui.MarginY := 0
@@ -315,7 +494,7 @@ ShowDropdown(kind) {
     dropdownGui.OnEvent("Escape", CloseDropdown)
     DrawDropdown(labels, selected, w, h)
     point := Buffer(8, 0)
-    NumPut "Int", 412 - w, point, 0
+    NumPut "Int", 407 - w, point, 0
     NumPut "Int", anchorY + 37, point, 4
     DllCall("user32\ClientToScreen", "Ptr", app.Hwnd, "Ptr", point)
     x := NumGet(point, 0, "Int"), y := NumGet(point, 4, "Int")
@@ -328,16 +507,16 @@ ShowDropdown(kind) {
 DrawDropdown(labels, selected, w, h) {
     global dropdownPanel
     g := BeginPaint(w, h, 0xFF172638, &bitmap)
-    Outline(g, 0.7, 0.7, w - 1.4, h - 1.4, 11, 0xFF395776, 1.3)
+    GradientRounded(g, 0.5, 0.5, w-1, h-1, 11, 0xFF223750, 0xFF142238, 0xFF395776, 1.3)
     Outline(g, 2, 2, w - 4, h - 4, 10, 0x3656BFF9, 1)
     Outline(g, 3.5, 3.5, w - 7, h - 7, 9, 0x1949BAF0, 1)
     for i, label in labels {
         rowY := 6 + (i - 1) * 34
         if i = selected {
-            Rounded(g, 6, rowY, w - 12, 31, 8, 0xFF24445D, 0xFF3679A2, 1)
+            GradientRounded(g, 6, rowY, w - 12, 31, 8, 0xFF2D516F, 0xFF213C59, 0xFF3679A2, 1)
             Outline(g, 7.5, rowY + 1.5, w - 15, 28, 7, 0x3535C8F9, 1)
         } else
-            Rounded(g, 6, rowY, w - 12, 31, 8, 0xFF1D2B40)
+            Rounded(g, 6, rowY, w - 12, 31, 8, 0x111D2B40)
         TextAt(g, label, 16, rowY + 1, w - 55, 29, 12
             , i = selected ? 0xFF6DDEFF : 0xFFD4E4F6, i = selected)
         if i = selected
@@ -351,7 +530,7 @@ HandleDropdownClick(*) {
     if !IsObject(dropdownGui)
         return
     MouseInClient(dropdownGui.Hwnd, &x, &y)
-    if x < 6 || x > 146 || y < 6
+    if x < 6 || x > 158 || y < 6
         return
     idx := Floor((y - 6) / 34) + 1
     kind := openKind
@@ -415,7 +594,7 @@ HandleActivate(wParam, lParam, msg, hwnd) {
 HandleSize(guiObj, minMax, width, height) {
     global app
     if minMax = 0 && guiObj.Hwnd = app.Hwnd {
-        RoundWindow(app.Hwnd, 16, 432, 332)
+        RoundWindow(app.Hwnd, 18, 432, 332)
         DrawPanel()
     }
 }
@@ -436,7 +615,7 @@ ShowApp(*) {
     global app
     CloseDropdown()
     app.Show("Restore")
-    RoundWindow(app.Hwnd, 16, 432, 332)
+    RoundWindow(app.Hwnd, 18, 432, 332)
     DrawPanel()
     WinActivate "ahk_id " app.Hwnd
 }
